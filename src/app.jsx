@@ -1,4 +1,6 @@
+import { createClient } from '@supabase/supabase-js';
 import { useState, useEffect, useRef, useReducer } from 'react';
+
 // Leaflet map (loaded dynamically)
 function loadLeaflet() {
   return new Promise(resolve => {
@@ -88,40 +90,6 @@ function MapPicker({ onSelect, onClose }) {
     </div>
   );
 }
-
-  useEffect(() => {
-    loadLeaflet().then(L => {
-      if (mapInstanceRef.current) return;
-      const map = L.map(mapRef.current).setView([19.4031, 72.8717], 13);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-      map.on('click', e => {
-        const { lat, lng } = e.latlng;
-        if (markerRef.current) markerRef.current.remove();
-        markerRef.current = L.marker([lat, lng]).addTo(map);
-        setSelected({ lat: lat.toFixed(6), lng: lng.toFixed(6) });
-      });
-      mapInstanceRef.current = map;
-    });
-    return () => { if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; } };
-  }, []);
-
-  return (
-    <div className="modal-overlay">
-      <div className="modal" style={{ width: 600, maxWidth: '95vw' }}>
-        <div className="modal-title">📍 Pick site location</div>
-        <button className="modal-close" onClick={onClose}><i className="ti ti-x"></i></button>
-        <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 10 }}>Tap anywhere on the map to drop a pin on the site location.</div>
-        <div ref={mapRef} style={{ height: 380, borderRadius: 8, border: '1px solid var(--border)', marginBottom: 14 }}></div>
-        {selected && <div style={{ fontSize: 12, color: 'var(--success)', marginBottom: 12 }}>✅ Selected: {selected.lat}, {selected.lng}</div>}
-        <div className="flex gap-2">
-          <button className="btn btn-primary" disabled={!selected} onClick={() => { onSelect(selected); onClose(); }}>Confirm location</button>
-          <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-import { createClient } from '@supabase/supabase-js';
 
 // ── CONFIG (from .env) ────────────────────────────────────────────────────────
 const SUPABASE_URL     = import.meta.env.VITE_SUPABASE_URL;
@@ -428,30 +396,30 @@ function AuthPage({ onLogin, users, setUsers }) {
   const [fpSuccess, setFpSuccess] = useState('');
 
   async function doLogin() {
-  setError('');
-  if (users.length === 0) { setError('No accounts yet. Register first.'); return; }
-  const u = users.find(u => u.username === loginData.username.toLowerCase().trim() && u.password === loginData.password);
-  if (!u) { setError('Invalid username or password.'); return; }
-  if (!u.active) { setError('Account deactivated. Contact your manager.'); return; }
-  onLogin(u);
-}
+    setError('');
+    if (users.length === 0) { setError('No accounts yet. Register first.'); return; }
+    const u = users.find(u => u.username === loginData.username.toLowerCase().trim() && u.password === loginData.password);
+    if (!u) { setError('Invalid username or password.'); return; }
+    if (!u.active) { setError('Account deactivated. Contact your manager.'); return; }
+    onLogin(u);
+  }
 
-async function doRegister() {
-  setError('');
-  if (!regData.username || !regData.password || !regData.name || !regData.mobile) { setError('Fill all required fields.'); return; }
-  if (users.find(u => u.username === regData.username)) { setError('Username already taken.'); return; }
-  setSaving(true);
-  const initials = regData.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
-  const colors = ['#f97316', '#38bdf8', '#22c55e', '#a78bfa', '#fb923c'];
-  const newUser = { username: regData.username, password: regData.password, name: regData.name, role: regData.role, designation: regData.designation, mobile: regData.mobile, whatsapp: regData.sameWA ? regData.mobile : regData.whatsapp, notify: regData.notify, active: true, avatar: initials, color: colors[users.length % colors.length] };
-  try {
-    const created = await DB.insert('users', newUser);
-    setUsers(u => [...u, created]);
-    setTab('login');
-    setLoginData({ username: regData.username, password: regData.password });
-  } catch (e) { setError('Error: ' + e.message); }
-  setSaving(false);
-}
+  async function doRegister() {
+    setError('');
+    if (!regData.username || !regData.password || !regData.name || !regData.mobile) { setError('Fill all required fields.'); return; }
+    if (users.find(u => u.username === regData.username)) { setError('Username already taken.'); return; }
+    setSaving(true);
+    const initials = regData.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+    const colors = ['#f97316', '#38bdf8', '#22c55e', '#a78bfa', '#fb923c'];
+    const newUser = { username: regData.username, password: regData.password, name: regData.name, role: regData.role, designation: regData.designation, mobile: regData.mobile, whatsapp: regData.sameWA ? regData.mobile : regData.whatsapp, notify: regData.notify, active: true, avatar: initials, color: colors[users.length % colors.length] };
+    try {
+      const created = await DB.insert('users', newUser);
+      setUsers(u => [...u, created]);
+      setTab('login');
+      setLoginData({ username: regData.username, password: regData.password });
+    } catch (e) { setError('Error: ' + e.message); }
+    setSaving(false);
+  }
 
   function resetFp() { setFpStep('input'); setFpUsername(''); setFpOtpSent(''); setFpOtpEntered(''); setFpNewPass(''); setFpConfirm(''); setFpLoading(false); setFpSuccess(''); setError(''); }
 
@@ -902,7 +870,6 @@ export default function App() {
     </div>
   );
 }
+
 import { createRoot } from 'react-dom/client';
 createRoot(document.getElementById('root')).render(<App />);
-
-
