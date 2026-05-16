@@ -308,21 +308,13 @@ function AuthPage({ onLogin, users, setUsers }) {
   async function doLogin() {
   setError('');
   if (users.length === 0) { setError('No accounts yet. Register first.'); return; }
-  
-  const u = users.find(u => u.username === loginData.username);
+  const u = users.find(u => u.username === loginData.username && u.password === loginData.password);
   if (!u) { setError('Invalid username or password.'); return; }
   if (!u.active) { setError('Account deactivated. Contact your manager.'); return; }
-
-  const { data, error } = await supabase.auth.signInWithPassword({
-    email: loginData.username + '@strongsteel.app',
-    password: loginData.password,
-  });
-
-  if (error) { setError('Invalid username or password.'); return; }
   onLogin(u);
 }
 
-  async function doRegister() {
+async function doRegister() {
   setError('');
   if (!regData.username || !regData.password || !regData.name || !regData.mobile) { setError('Fill all required fields.'); return; }
   if (users.find(u => u.username === regData.username)) { setError('Username already taken.'); return; }
@@ -330,17 +322,8 @@ function AuthPage({ onLogin, users, setUsers }) {
   const initials = regData.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
   const colors = ['#f97316', '#38bdf8', '#22c55e', '#a78bfa', '#fb923c'];
   const newUser = { username: regData.username, password: regData.password, name: regData.name, role: regData.role, designation: regData.designation, mobile: regData.mobile, whatsapp: regData.sameWA ? regData.mobile : regData.whatsapp, notify: regData.notify, active: true, avatar: initials, color: colors[users.length % colors.length] };
-  
   try {
-    // Step 1 — Create Supabase Auth user
-    const { data: authData, error: authError } = await supabase.auth.signUp({
-      email: regData.username + '@strongsteel.app',
-      password: regData.password,
-    });
-    if (authError) throw authError;
-
-    // Step 2 — Save to your users table with auth_id linked
-    const created = await DB.insert('users', { ...newUser, auth_id: authData.user.id });
+    const created = await DB.insert('users', newUser);
     setUsers(u => [...u, created]);
     setTab('login');
     setLoginData({ username: regData.username, password: regData.password });
