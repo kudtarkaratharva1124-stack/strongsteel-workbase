@@ -1,4 +1,57 @@
 import { useState, useEffect, useRef, useReducer } from 'react';
+// Leaflet map (loaded dynamically)
+function loadLeaflet() {
+  return new Promise(resolve => {
+    if (window.L) { resolve(window.L); return; }
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+    document.head.appendChild(link);
+    const script = document.createElement('script');
+    script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+    script.onload = () => resolve(window.L);
+    document.head.appendChild(script);
+  });
+}
+
+function MapPicker({ onSelect, onClose }) {
+  const mapRef = useRef(null);
+  const mapInstanceRef = useRef(null);
+  const markerRef = useRef(null);
+  const [selected, setSelected] = useState(null);
+
+  useEffect(() => {
+    loadLeaflet().then(L => {
+      if (mapInstanceRef.current) return;
+      const map = L.map(mapRef.current).setView([19.4031, 72.8717], 13);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+      map.on('click', e => {
+        const { lat, lng } = e.latlng;
+        if (markerRef.current) markerRef.current.remove();
+        markerRef.current = L.marker([lat, lng]).addTo(map);
+        setSelected({ lat: lat.toFixed(6), lng: lng.toFixed(6) });
+      });
+      mapInstanceRef.current = map;
+    });
+    return () => { if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; } };
+  }, []);
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal" style={{ width: 600, maxWidth: '95vw' }}>
+        <div className="modal-title">📍 Pick site location</div>
+        <button className="modal-close" onClick={onClose}><i className="ti ti-x"></i></button>
+        <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 10 }}>Tap anywhere on the map to drop a pin on the site location.</div>
+        <div ref={mapRef} style={{ height: 380, borderRadius: 8, border: '1px solid var(--border)', marginBottom: 14 }}></div>
+        {selected && <div style={{ fontSize: 12, color: 'var(--success)', marginBottom: 12 }}>✅ Selected: {selected.lat}, {selected.lng}</div>}
+        <div className="flex gap-2">
+          <button className="btn btn-primary" disabled={!selected} onClick={() => { onSelect(selected); onClose(); }}>Confirm location</button>
+          <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
 import { createClient } from '@supabase/supabase-js';
 
 // ── CONFIG (from .env) ────────────────────────────────────────────────────────
@@ -494,7 +547,7 @@ function Dashboard({ currentUser, tasks, users, punchLog }) {
 }
 
 // ── PUNCH PAGE ────────────────────────────────────────────────────────────────
-function PunchPage({ currentUser, punchLog, setPunchLog }) {
+function PunchPage({ currentUser, punchLog, setPunchLog, tasks }) {
   const [gpsStatus, setGpsStatus] = useState('idle');
   const [distance, setDistance] = useState(null);
   const [inRange, setInRange] = useState(false);
@@ -504,9 +557,16 @@ function PunchPage({ currentUser, punchLog, setPunchLog }) {
   const todayKey = new Date().toDateString();
   const todayLog = punchLog.find(p => p.user_id === currentUser.id && p.date === todayKey);
   const isPunchedIn = todayLog?.in_time && !todayLog?.out_time;
+
+  const myActiveTasks = tasks.filter(t => t.assigned_to === currentUser.id && !t.done);
+  const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
+  const topTask = myActiveTasks.filter(t => t.site_lat).sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority])[0];
+  const punchLat = topTask ? parseFloat(topTask.site_lat) : OFFICE_LAT;
+  const punchLng = topTask ? parseFloat(topTask.site_lng) : OFFICE_LNG;
+  const punchLabel = topTask ? (topTask.site_name || 'Site location') : 'Office';
   useEffect(() => { const t = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(t); }, []);
   useEffect(() => { if (!isPunchedIn || !todayLog?.in_time_ms) return; const t = setInterval(() => setElapsed(Date.now() - todayLog.in_time_ms), 1000); return () => clearInterval(t); }, [isPunchedIn, todayLog]);
-  function getGPS() { setGpsStatus('loading'); if (!navigator.geolocation) { setDistance(60); setInRange(true); setGpsStatus('ok'); return; } navigator.geolocation.getCurrentPosition(pos => { const d = Math.round(getDistance(pos.coords.latitude, pos.coords.longitude, OFFICE_LAT, OFFICE_LNG)); setDistance(d); setInRange(d <= GEOFENCE_RADIUS); setGpsStatus('ok'); }, () => { setDistance(60); setInRange(true); setGpsStatus('ok'); }, { timeout: 8000 }); }
+  function getGPS() { setGpsStatus('loading'); if (!navigator.geolocation) { setDistance(60); setInRange(true); setGpsStatus('ok'); return; } navigator.geolocation.getCurrentPosition(pos => { const d = Math.round(getDistance(pos.coords.latitude, pos.coords.longitude, punchLat, punchLng)); setDistance(d); setInRange(d <= GEOFENCE_RADIUS); setGpsStatus('ok'); }, () => { setDistance(60); setInRange(true); setGpsStatus('ok'); }, { timeout: 8000 }); }
   async function doPunchIn() { setSaving(true); const timeStr = now.toTimeString().slice(0, 5); try { const entry = await DB.insert('punch_log', { user_id: currentUser.id, date: todayKey, in_time: timeStr, in_time_ms: Date.now(), out_time: null, hours: null }); setPunchLog(prev => [...prev.filter(p => !(p.user_id === currentUser.id && p.date === todayKey)), entry]); } catch (e) { console.warn(e); } setElapsed(0); setSaving(false); }
   async function doPunchOut() { setSaving(true); const timeStr = now.toTimeString().slice(0, 5); const hours = ((Date.now() - todayLog.in_time_ms) / 3600000).toFixed(2); try { await DB.update('punch_log', todayLog.id, { out_time: timeStr, hours }); setPunchLog(prev => prev.map(p => p.id === todayLog.id ? { ...p, out_time: timeStr, hours } : p)); } catch (e) { console.warn(e); } setSaving(false); }
   const ringClass = isPunchedIn ? 'punched-in' : gpsStatus === 'ok' ? (inRange ? 'in-range' : 'out-range') : '';
@@ -514,7 +574,7 @@ function PunchPage({ currentUser, punchLog, setPunchLog }) {
   return (
     <div className="flex-col">
       <div className="card"><div className="card-title"><i className="ti ti-clock"></i> Shift clock</div><div className="clock-display">{now.toTimeString().slice(0, 8)}</div><div className="clock-label">{now.toDateString()}</div>{isPunchedIn && <div style={{ textAlign: 'center', marginTop: 16 }}><div style={{ fontSize: 11, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Time on shift</div><div style={{ fontSize: 28, fontWeight: 600, color: 'var(--success)', marginTop: 4, fontVariantNumeric: 'tabular-nums' }}>{fmtClock(elapsed)}</div></div>}</div>
-      <div className="gps-panel"><div className={`gps-ring ${ringClass}`}><i className={`ti ${gpsIcon}`} style={{ fontSize: 34, color: isPunchedIn ? 'var(--accent)' : gpsStatus === 'ok' ? (inRange ? 'var(--success)' : 'var(--danger)') : 'var(--text3)' }}></i></div>{distance !== null && <><div className={`distance-num ${inRange ? 'in-range' : 'out-range'}`}>{distance}m</div><div style={{ fontSize: 11, color: 'var(--text3)' }}>from office · geofence: {GEOFENCE_RADIUS}m</div>{inRange ? <span className="badge badge-green">Within range</span> : <span className="badge badge-red">Out of range</span>}</>}{gpsStatus === 'idle' && <button className="btn btn-secondary" onClick={getGPS}><i className="ti ti-satellite"></i> Get my location</button>}{gpsStatus === 'loading' && <span><span className="spinner"></span> Fetching GPS...</span>}{gpsStatus === 'ok' && !isPunchedIn && <button className="btn btn-success" disabled={!inRange || saving} onClick={doPunchIn} style={{ fontSize: 14, padding: '11px 28px' }}>{saving ? 'Saving...' : 'Punch in'}</button>}{isPunchedIn && <button className="btn btn-danger" onClick={doPunchOut} disabled={saving} style={{ fontSize: 14, padding: '11px 28px' }}>{saving ? 'Saving...' : 'Punch out'}</button>}{todayLog && <div style={{ textAlign: 'center', fontSize: 12, color: 'var(--text3)' }}>{todayLog.in_time && <div>In: {todayLog.in_time}</div>}{todayLog.out_time && <div>Out: {todayLog.out_time} · Total: {todayLog.hours}h</div>}</div>}</div>
+      <div className="gps-panel"><div className={`gps-ring ${ringClass}`}><i className={`ti ${gpsIcon}`} style={{ fontSize: 34, color: isPunchedIn ? 'var(--accent)' : gpsStatus === 'ok' ? (inRange ? 'var(--success)' : 'var(--danger)') : 'var(--text3)' }}></i></div>{distance !== null && <><div className={`distance-num ${inRange ? 'in-range' : 'out-range'}`}>{distance}m</div><div style={{ fontSize: 11, color: 'var(--text3)' }}>from {punchLabel} · geofence: {GEOFENCE_RADIUS}m</div><div style={{ fontSize: 11, color: 'var(--text3)' }}>from office · geofence: {GEOFENCE_RADIUS}m</div>{inRange ? <span className="badge badge-green">Within range</span> : <span className="badge badge-red">Out of range</span>}</>}{gpsStatus === 'idle' && <button className="btn btn-secondary" onClick={getGPS}><i className="ti ti-satellite"></i> Get my location</button>}{gpsStatus === 'loading' && <span><span className="spinner"></span> Fetching GPS...</span>}{gpsStatus === 'ok' && !isPunchedIn && <button className="btn btn-success" disabled={!inRange || saving} onClick={doPunchIn} style={{ fontSize: 14, padding: '11px 28px' }}>{saving ? 'Saving...' : 'Punch in'}</button>}{isPunchedIn && <button className="btn btn-danger" onClick={doPunchOut} disabled={saving} style={{ fontSize: 14, padding: '11px 28px' }}>{saving ? 'Saving...' : 'Punch out'}</button>}{todayLog && <div style={{ textAlign: 'center', fontSize: 12, color: 'var(--text3)' }}>{todayLog.in_time && <div>In: {todayLog.in_time}</div>}{todayLog.out_time && <div>Out: {todayLog.out_time} · Total: {todayLog.hours}h</div>}</div>}</div>
       <div className="card"><div className="card-title"><i className="ti ti-map-pin"></i> Office location</div><div style={{ fontSize: 13, color: 'var(--text2)', lineHeight: 2 }}><div>Pinnacle Industrial Park, Vasai East</div><div style={{ fontSize: 11, color: 'var(--text3)' }}>Lat: {OFFICE_LAT}° N · Lng: {OFFICE_LNG}° E · Radius: {GEOFENCE_RADIUS}m</div></div></div>
     </div>
   );
@@ -526,7 +586,8 @@ function TasksPage({ currentUser, tasks, setTasks, users }) {
   const [showAssign, setShowAssign] = useState(false);
   const [showDoneModal, setShowDoneModal] = useState(null);
   const [doneNote, setDoneNote] = useState('');
-  const [newTask, setNewTask] = useState({ title: '', description: '', priority: 'medium', assignedTo: '', deadline: '' });
+  const [newTask, setNewTask] = useState({ title: '', description: '', priority: 'medium', assignedTo: '', deadline: '', site_lat: null, site_lng: null, site_name: '' });
+  const [showMapPicker, setShowMapPicker] = useState(false);
   const [saving, setSaving] = useState(false);
   const isAdmin = currentUser.role !== 'worker';
   const baseTasks = currentUser.role === 'worker' ? tasks.filter(t => t.assigned_to === currentUser.id) : tasks;
@@ -543,7 +604,7 @@ function TasksPage({ currentUser, tasks, setTasks, users }) {
   async function markSeen(task) { try { await DB.update('tasks', task.id, { seen: true }); } catch (e) { } setTasks(ts => ts.map(t => t.id === task.id ? { ...t, seen: true } : t)); }
   async function deleteTask(task) { try { await DB.delete('tasks', task.id); } catch (e) { } setTasks(ts => ts.filter(t => t.id !== task.id)); }
   async function confirmDone() { setSaving(true); try { await DB.update('tasks', showDoneModal.id, { done: true, seen: true, done_note: doneNote }); } catch (e) { } setTasks(ts => ts.map(t => t.id === showDoneModal.id ? { ...t, done: true, seen: true, done_note: doneNote } : t)); setShowDoneModal(null); setDoneNote(''); setSaving(false); }
-  async function assignTask() { if (!newTask.title || !newTask.assignedTo || !newTask.deadline) return; setSaving(true); try { const task = await DB.insert('tasks', { title: newTask.title, description: newTask.description, priority: newTask.priority, assigned_to: newTask.assignedTo, assigned_by: currentUser.id, deadline: new Date(newTask.deadline).getTime(), done: false, seen: false, done_note: '', created_at: Date.now() }); setTasks(ts => [...ts, task]); } catch (e) { console.warn(e); } setNewTask({ title: '', description: '', priority: 'medium', assignedTo: '', deadline: '' }); setShowAssign(false); setSaving(false); }
+  async function assignTask() { if (!newTask.title || !newTask.assignedTo || !newTask.deadline) return; setSaving(true); try { const task = await DB.insert('tasks', { title: newTask.title, description: newTask.description, priority: newTask.priority, assigned_to: newTask.assignedTo, assigned_by: currentUser.id, deadline: new Date(newTask.deadline).getTime(), done: false, seen: false, done_note: '', created_at: Date.now(), site_lat: newTask.site_lat, site_lng: newTask.site_lng, site_name: newTask.site_name }); setTasks(ts => [...ts, task]); } catch (e) { console.warn(e); } setNewTask({ title: '', description: '', priority: 'medium', assignedTo: '', deadline: '' }); setShowAssign(false); setSaving(false); }
   const priorityBadge = p => p === 'critical' ? <span className="badge badge-red">Critical</span> : p === 'high' ? <span className="badge badge-orange">High</span> : p === 'medium' ? <span className="badge badge-blue">Medium</span> : <span className="badge badge-gray">Low</span>;
   const getUserName = id => users.find(u => u.id === id)?.name || 'Unknown';
   return (
@@ -762,7 +823,7 @@ export default function App() {
         </div>
         <div className="page-content">
           {page === 'dashboard' && <Dashboard currentUser={currentUser} tasks={tasks} users={users} punchLog={punchLog} />}
-          {page === 'punch' && <PunchPage currentUser={currentUser} punchLog={punchLog} setPunchLog={setPunchLog} />}
+          {page === 'punch' && <PunchPage currentUser={currentUser} punchLog={punchLog} setPunchLog={setPunchLog} tasks={tasks} />}
           {page === 'tasks' && <TasksPage currentUser={currentUser} tasks={tasks} setTasks={setTasks} users={users} />}
           {page === 'email' && <EmailAI currentUser={currentUser} users={users} mailSettings={mailSettings} setMailSettings={setMailSettings} mailNotifications={mailNotifications} setMailNotifications={setMailNotifications} />}
           {page === 'chat' && <AiChat currentUser={currentUser} tasks={tasks} users={users} />}
