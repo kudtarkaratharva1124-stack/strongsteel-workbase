@@ -19,6 +19,75 @@ function MapPicker({ onSelect, onClose }) {
   const mapInstanceRef = useRef(null);
   const markerRef = useRef(null);
   const [selected, setSelected] = useState(null);
+  const [search, setSearch] = useState('');
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState('');
+
+  useEffect(() => {
+    loadLeaflet().then(L => {
+      if (mapInstanceRef.current) return;
+      const map = L.map(mapRef.current).setView([19.4031, 72.8717], 13);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+      map.on('click', e => {
+        const { lat, lng } = e.latlng;
+        if (markerRef.current) markerRef.current.remove();
+        markerRef.current = L.marker([lat, lng]).addTo(map);
+        setSelected({ lat: lat.toFixed(6), lng: lng.toFixed(6) });
+      });
+      mapInstanceRef.current = map;
+    });
+    return () => { if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; } };
+  }, []);
+
+  async function searchLocation() {
+    if (!search.trim()) return;
+    setSearching(true);
+    setSearchError('');
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(search)}&limit=1`);
+      const data = await res.json();
+      if (data.length === 0) { setSearchError('Location not found. Try a different search.'); setSearching(false); return; }
+      const { lat, lon, display_name } = data[0];
+      const L = window.L;
+      const map = mapInstanceRef.current;
+      map.setView([parseFloat(lat), parseFloat(lon)], 16);
+      if (markerRef.current) markerRef.current.remove();
+      markerRef.current = L.marker([parseFloat(lat), parseFloat(lon)]).addTo(map);
+      markerRef.current.bindPopup(display_name).openPopup();
+      setSelected({ lat: parseFloat(lat).toFixed(6), lng: parseFloat(lon).toFixed(6) });
+    } catch (e) { setSearchError('Search failed. Try tapping on the map directly.'); }
+    setSearching(false);
+  }
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal" style={{ width: 600, maxWidth: '95vw' }}>
+        <div className="modal-title">📍 Pick site location</div>
+        <button className="modal-close" onClick={onClose}><i className="ti ti-x"></i></button>
+        <div className="flex gap-2" style={{ marginBottom: 10 }}>
+          <input
+            placeholder="Search address or place name..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && searchLocation()}
+            style={{ flex: 1 }}
+          />
+          <button className="btn btn-primary btn-sm" onClick={searchLocation} disabled={searching}>
+            {searching ? <span className="spinner"></span> : <i className="ti ti-search"></i>}
+          </button>
+        </div>
+        {searchError && <div style={{ fontSize: 12, color: 'var(--danger)', marginBottom: 8 }}>{searchError}</div>}
+        <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8 }}>Or tap anywhere on the map to drop a pin manually.</div>
+        <div ref={mapRef} style={{ height: 360, borderRadius: 8, border: '1px solid var(--border)', marginBottom: 14 }}></div>
+        {selected && <div style={{ fontSize: 12, color: 'var(--success)', marginBottom: 12 }}>✅ Selected: {selected.lat}, {selected.lng}</div>}
+        <div className="flex gap-2">
+          <button className="btn btn-primary" disabled={!selected} onClick={() => { onSelect(selected); onClose(); }}>Confirm location</button>
+          <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
   useEffect(() => {
     loadLeaflet().then(L => {
