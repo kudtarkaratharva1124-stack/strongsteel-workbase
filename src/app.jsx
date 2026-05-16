@@ -308,7 +308,7 @@ function AuthPage({ onLogin, users, setUsers }) {
   async function doLogin() {
   setError('');
   if (users.length === 0) { setError('No accounts yet. Register first.'); return; }
-  const u = users.find(u => u.username === loginData.username && u.password === loginData.password);
+  const u = users.find(u => u.username === loginData.username.toLowerCase().trim() && u.password === loginData.password);
   if (!u) { setError('Invalid username or password.'); return; }
   if (!u.active) { setError('Account deactivated. Contact your manager.'); return; }
   onLogin(u);
