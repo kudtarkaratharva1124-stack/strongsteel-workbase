@@ -43,15 +43,13 @@ function MapPicker({ onSelect, onClose }) {
 
   async function searchLocation() {
     if (!search.trim()) return;
-    setSearching(true);
-    setSearchError('');
+    setSearching(true); setSearchError('');
     try {
       const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(search)}&limit=1`);
       const data = await res.json();
       if (data.length === 0) { setSearchError('Location not found. Try a different search.'); setSearching(false); return; }
       const { lat, lon, display_name } = data[0];
-      const L = window.L;
-      const map = mapInstanceRef.current;
+      const L = window.L; const map = mapInstanceRef.current;
       map.setView([parseFloat(lat), parseFloat(lon)], 16);
       if (markerRef.current) markerRef.current.remove();
       markerRef.current = L.marker([parseFloat(lat), parseFloat(lon)]).addTo(map);
@@ -67,16 +65,8 @@ function MapPicker({ onSelect, onClose }) {
         <div className="modal-title">📍 Pick site location</div>
         <button className="modal-close" onClick={onClose}><i className="ti ti-x"></i></button>
         <div className="flex gap-2" style={{ marginBottom: 10 }}>
-          <input
-            placeholder="Search address or place name..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && searchLocation()}
-            style={{ flex: 1 }}
-          />
-          <button className="btn btn-primary btn-sm" onClick={searchLocation} disabled={searching}>
-            {searching ? <span className="spinner"></span> : <i className="ti ti-search"></i>}
-          </button>
+          <input placeholder="Search address or place name..." value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && searchLocation()} style={{ flex: 1 }} />
+          <button className="btn btn-primary btn-sm" onClick={searchLocation} disabled={searching}>{searching ? <span className="spinner"></span> : <i className="ti ti-search"></i>}</button>
         </div>
         {searchError && <div style={{ fontSize: 12, color: 'var(--danger)', marginBottom: 8 }}>{searchError}</div>}
         <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8 }}>Or tap anywhere on the map to drop a pin manually.</div>
@@ -92,13 +82,13 @@ function MapPicker({ onSelect, onClose }) {
 }
 
 // ── CONFIG (from .env) ────────────────────────────────────────────────────────
-const SUPABASE_URL     = import.meta.env.VITE_SUPABASE_URL;
-const SUPABASE_ANON_KEY= import.meta.env.VITE_SUPABASE_ANON_KEY;
-const GEMINI_API_KEY   = import.meta.env.VITE_GEMINI_API_KEY;
-const FAST2SMS_KEY     = import.meta.env.VITE_FAST2SMS_KEY;
-const OFFICE_LAT       = parseFloat(import.meta.env.VITE_OFFICE_LAT  || '19.403174');
-const OFFICE_LNG       = parseFloat(import.meta.env.VITE_OFFICE_LNG  || '72.8717664');
-const GEOFENCE_RADIUS  = parseInt(import.meta.env.VITE_GEOFENCE_RADIUS || '150');
+const SUPABASE_URL      = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const GEMINI_API_KEY    = import.meta.env.VITE_GEMINI_API_KEY;
+const FAST2SMS_KEY      = import.meta.env.VITE_FAST2SMS_KEY;
+const OFFICE_LAT        = parseFloat(import.meta.env.VITE_OFFICE_LAT  || '19.403174');
+const OFFICE_LNG        = parseFloat(import.meta.env.VITE_OFFICE_LNG  || '72.8717664');
+const GEOFENCE_RADIUS   = parseInt(import.meta.env.VITE_GEOFENCE_RADIUS || '150');
 
 // ── SUPABASE ──────────────────────────────────────────────────────────────────
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -128,10 +118,36 @@ const DB = {
     if (error) throw error;
     return data;
   },
+  // Fetch DMs between two users
+  async getDMs(userA, userB) {
+    const { data, error } = await sb.from('dm_messages')
+      .select('*')
+      .or(`and(sender_id.eq.${userA},receiver_id.eq.${userB}),and(sender_id.eq.${userB},receiver_id.eq.${userA})`)
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+    return data || [];
+  },
+  // Mark messages as read
+  async markDMsRead(receiverId, senderId) {
+    const { error } = await sb.from('dm_messages')
+      .update({ read: true })
+      .eq('receiver_id', receiverId)
+      .eq('sender_id', senderId)
+      .eq('read', false);
+    if (error) console.warn('markDMsRead:', error.message);
+  },
   subscribe(table, cb) {
     return sb.channel('realtime:' + table)
       .on('postgres_changes', { event: '*', schema: 'public', table }, () => {
         DB.getAll(table).then(cb).catch(console.warn);
+      })
+      .subscribe();
+  },
+  // Subscribe to DM inserts with a callback receiving the new row
+  subscribeDMs(cb) {
+    return sb.channel('realtime:dm_messages')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'dm_messages' }, payload => {
+        cb(payload.new);
       })
       .subscribe();
   }
@@ -142,9 +158,7 @@ function getDistance(lat1, lon1, lat2, lon2) {
   const R = 6371000;
   const dLat = (lat2 - lat1) * Math.PI / 180;
   const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a = Math.sin(dLat / 2) ** 2 +
-    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-    Math.sin(dLon / 2) ** 2;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
@@ -162,19 +176,21 @@ function fmtClock(ms) {
   return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
 }
 
+function fmtMsgTime(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const now = new Date();
+  const isToday = d.toDateString() === now.toDateString();
+  if (isToday) return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+  return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) + ' ' + d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+}
+
 async function callAI(messages, system = '') {
-  const geminiMessages = messages.map(m => ({
-    role: m.role === 'assistant' ? 'model' : 'user',
-    parts: [{ text: m.content }]
-  }));
+  const geminiMessages = messages.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
   if (system) geminiMessages.unshift({ role: 'user', parts: [{ text: 'SYSTEM: ' + system }] });
   const res = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: geminiMessages, generationConfig: { maxOutputTokens: 1000 } })
-    }
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: geminiMessages, generationConfig: { maxOutputTokens: 1000 } }) }
   );
   const data = await res.json();
   if (data.error) throw new Error(data.error.message);
@@ -186,9 +202,7 @@ async function sendOtpSms(mobile, otp) {
     alert(`[Demo] OTP for ${mobile}: ${otp}\nAdd VITE_FAST2SMS_KEY in .env to send real SMS.`);
     return true;
   }
-  const res = await fetch(
-    `https://www.fast2sms.com/dev/bulkV2?authorization=${FAST2SMS_KEY}&route=otp&variables_values=${otp}&flash=0&numbers=${mobile}`
-  );
+  const res = await fetch(`https://www.fast2sms.com/dev/bulkV2?authorization=${FAST2SMS_KEY}&route=otp&variables_values=${otp}&flash=0&numbers=${mobile}`);
   const data = await res.json();
   if (!data.return) throw new Error(data.message || 'SMS failed');
   return true;
@@ -197,11 +211,7 @@ async function sendOtpSms(mobile, otp) {
 // ── PWA SERVICE WORKER ────────────────────────────────────────────────────────
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    const sw = `
-      const CACHE='ss-v1';
-      self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/']))));
-      self.addEventListener('fetch',e=>{if(e.request.method!=='GET')return;e.respondWith(fetch(e.request).catch(()=>caches.match(e.request)));});
-    `;
+    const sw = `const CACHE='ss-v1';self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/']))));self.addEventListener('fetch',e=>{if(e.request.method!=='GET')return;e.respondWith(fetch(e.request).catch(()=>caches.match(e.request)));});`;
     const blob = new Blob([sw], { type: 'application/javascript' });
     navigator.serviceWorker.register(URL.createObjectURL(blob)).catch(() => {});
   });
@@ -353,6 +363,46 @@ const styles = `
   .auth-tab.active{background:var(--accent);color:#fff;}
   .flex{display:flex;}.items-center{align-items:center;}.justify-between{justify-content:space-between;}.flex-wrap{flex-wrap:wrap;}.w-full{width:100%;}
   .gap-2{gap:8px;}.mt-2{margin-top:12px;}.mt-3{margin-top:20px;}
+
+  /* ── DM STYLES ── */
+  .dm-layout{display:grid;grid-template-columns:260px 1fr;height:calc(100vh - 52px - 48px);gap:0;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;}
+  .dm-sidebar{border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;}
+  .dm-sidebar-header{padding:14px 16px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;color:var(--text);display:flex;align-items:center;gap:8px;flex-shrink:0;}
+  .dm-sidebar-header i{color:var(--text3);font-size:15px;}
+  .dm-contacts{flex:1;overflow-y:auto;}
+  .dm-contact{display:flex;align-items:center;gap:10px;padding:11px 14px;cursor:pointer;transition:background 0.1s;border-bottom:1px solid var(--border);}
+  .dm-contact:hover{background:var(--surface2);}
+  .dm-contact.active{background:rgba(249,115,22,0.08);border-right:2px solid var(--accent);}
+  .dm-contact-avatar{width:34px;height:34px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;color:#000;}
+  .dm-contact-info{flex:1;min-width:0;}
+  .dm-contact-name{font-size:13px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .dm-contact-preview{font-size:11px;color:var(--text3);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .dm-contact-meta{display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;}
+  .dm-contact-time{font-size:10px;color:var(--text3);}
+  .dm-unread-badge{background:var(--accent);color:#fff;font-size:9px;font-weight:700;padding:1px 5px;border-radius:10px;min-width:16px;text-align:center;}
+  .dm-main{display:flex;flex-direction:column;overflow:hidden;}
+  .dm-chat-header{padding:12px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-shrink:0;background:var(--surface);}
+  .dm-chat-header-name{font-size:14px;font-weight:600;color:var(--text);}
+  .dm-chat-header-role{font-size:11px;color:var(--text3);margin-top:1px;}
+  .dm-messages-area{flex:1;overflow-y:auto;padding:16px 18px;display:flex;flex-direction:column;gap:10px;}
+  .dm-message{display:flex;flex-direction:column;max-width:72%;}
+  .dm-message.mine{align-self:flex-end;align-items:flex-end;}
+  .dm-message.theirs{align-self:flex-start;align-items:flex-start;}
+  .dm-bubble{padding:9px 13px;border-radius:10px;font-size:13px;line-height:1.55;word-break:break-word;}
+  .dm-message.mine .dm-bubble{background:rgba(249,115,22,0.18);border:1px solid rgba(249,115,22,0.28);color:var(--text);border-radius:12px 12px 2px 12px;}
+  .dm-message.theirs .dm-bubble{background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:2px 12px 12px 12px;}
+  .dm-msg-time{font-size:10px;color:var(--text3);margin-top:3px;display:flex;align-items:center;gap:4px;}
+  .dm-read-tick{color:var(--info);font-size:11px;}
+  .dm-input-area{padding:12px 16px;border-top:1px solid var(--border);display:flex;gap:8px;align-items:flex-end;flex-shrink:0;background:var(--surface);}
+  .dm-input-area textarea{flex:1;min-height:38px;max-height:120px;resize:none;font-size:13px;line-height:1.5;padding:9px 11px;}
+  .dm-empty-state{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--text3);}
+  .dm-empty-state i{font-size:40px;opacity:0.3;}
+  .dm-date-divider{display:flex;align-items:center;gap:10px;margin:8px 0;}
+  .dm-date-divider span{font-size:10px;color:var(--text3);white-space:nowrap;}
+  .dm-date-divider::before,.dm-date-divider::after{content:'';flex:1;height:1px;background:var(--border);}
+  .dm-search{padding:10px 14px;border-bottom:1px solid var(--border);}
+  .dm-search input{font-size:12px;padding:6px 10px;}
+  .dm-no-contact{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:var(--text3);font-size:13px;}
   @media(max-width:900px){
     .grid-4{grid-template-columns:1fr 1fr;}
     .sidebar{width:56px;min-width:56px;}
@@ -360,10 +410,11 @@ const styles = `
     .nav-item{padding:10px;justify-content:center;}
     .nav-label{display:none;}
     .logout-btn{display:none;}
+    .dm-layout{grid-template-columns:1fr;}
+    .dm-sidebar{display:none;}
   }
 `;
 
-// Inject styles
 const styleTag = document.createElement('style');
 styleTag.textContent = styles;
 document.head.appendChild(styleTag);
@@ -594,7 +645,6 @@ function PunchPage({ currentUser, punchLog, setPunchLog, tasks }) {
   const todayKey = new Date().toDateString();
   const todayLog = punchLog.find(p => p.user_id === currentUser.id && p.date === todayKey);
   const isPunchedIn = todayLog?.in_time && !todayLog?.out_time;
-
   const myActiveTasks = tasks.filter(t => t.assigned_to === currentUser.id && !t.done);
   const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
   const topTask = myActiveTasks.filter(t => t.site_lat).sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority])[0];
@@ -779,6 +829,264 @@ function ManageUsers({ currentUser, users, setUsers }) {
   );
 }
 
+// ── DIRECT MESSAGES ───────────────────────────────────────────────────────────
+function DirectMessages({ currentUser, users, dmMessages, setDmMessages }) {
+  const [activePeer, setActivePeer] = useState(null);
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState('');
+  const [sending, setSending] = useState(false);
+  const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(false);
+  const endRef = useRef(null);
+  const channelRef = useRef(null);
+
+  // People current user can chat with (everyone except themselves)
+  const contacts = users.filter(u => u.id !== currentUser.id && u.active);
+  const filtered = contacts.filter(u => u.name.toLowerCase().includes(search.toLowerCase()) || (u.designation || '').toLowerCase().includes(search.toLowerCase()));
+
+  // Count unread per peer
+  function unreadFrom(peerId) {
+    return dmMessages.filter(m => m.sender_id === peerId && m.receiver_id === currentUser.id && !m.read).length;
+  }
+
+  // Last message preview per peer
+  function lastMsg(peerId) {
+    const msgs = dmMessages.filter(m =>
+      (m.sender_id === currentUser.id && m.receiver_id === peerId) ||
+      (m.sender_id === peerId && m.receiver_id === currentUser.id)
+    );
+    if (!msgs.length) return null;
+    return msgs.sort((a, b) => b.created_at - a.created_at)[0];
+  }
+
+  // Sort contacts: unread first, then by last message time
+  const sortedContacts = [...filtered].sort((a, b) => {
+    const ua = unreadFrom(a.id), ub = unreadFrom(b.id);
+    if (ua !== ub) return ub - ua;
+    const la = lastMsg(a.id), lb = lastMsg(b.id);
+    return (lb?.created_at || 0) - (la?.created_at || 0);
+  });
+
+  // Load conversation when peer changes
+  useEffect(() => {
+    if (!activePeer) return;
+    setLoading(true);
+    DB.getDMs(currentUser.id, activePeer.id)
+      .then(msgs => {
+        setMessages(msgs);
+        // Mark as read
+        DB.markDMsRead(currentUser.id, activePeer.id).then(() => {
+          setDmMessages(prev => prev.map(m =>
+            m.sender_id === activePeer.id && m.receiver_id === currentUser.id ? { ...m, read: true } : m
+          ));
+        });
+      })
+      .catch(console.warn)
+      .finally(() => setLoading(false));
+  }, [activePeer?.id]);
+
+  // Scroll to bottom on new messages
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+
+  // Subscribe to new DM inserts in realtime
+  useEffect(() => {
+    const channel = DB.subscribeDMs(newMsg => {
+      // Add to global dmMessages
+      setDmMessages(prev => {
+        if (prev.find(m => m.id === newMsg.id)) return prev;
+        return [...prev, newMsg];
+      });
+      // If this message is in the active conversation, add it to view
+      if (activePeer && (
+        (newMsg.sender_id === currentUser.id && newMsg.receiver_id === activePeer.id) ||
+        (newMsg.sender_id === activePeer.id && newMsg.receiver_id === currentUser.id)
+      )) {
+        setMessages(prev => {
+          if (prev.find(m => m.id === newMsg.id)) return prev;
+          return [...prev, newMsg];
+        });
+        // Mark as read immediately if it's for us
+        if (newMsg.receiver_id === currentUser.id) {
+          DB.markDMsRead(currentUser.id, activePeer.id);
+          setDmMessages(prev => prev.map(m =>
+            m.id === newMsg.id ? { ...m, read: true } : m
+          ));
+        }
+      }
+    });
+    channelRef.current = channel;
+    return () => { if (channelRef.current) sb.removeChannel(channelRef.current); };
+  }, [activePeer?.id]);
+
+  async function sendMessage() {
+    if (!input.trim() || !activePeer || sending) return;
+    const text = input.trim();
+    setInput('');
+    setSending(true);
+    try {
+      const msg = await DB.insert('dm_messages', {
+        sender_id: currentUser.id,
+        receiver_id: activePeer.id,
+        text,
+        read: false,
+        created_at: Date.now()
+      });
+      // Optimistically add (realtime will also fire but deduped)
+      setMessages(prev => prev.find(m => m.id === msg.id) ? prev : [...prev, msg]);
+      setDmMessages(prev => prev.find(m => m.id === msg.id) ? prev : [...prev, msg]);
+    } catch (e) { console.warn(e); }
+    setSending(false);
+  }
+
+  // Group messages by date for dividers
+  function getDateLabel(ts) {
+    const d = new Date(ts);
+    const today = new Date();
+    const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
+    if (d.toDateString() === today.toDateString()) return 'Today';
+    if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
+    return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' });
+  }
+
+  function renderMessages() {
+    if (!messages.length) return (
+      <div className="dm-empty-state">
+        <i className="ti ti-message-2"></i>
+        <div style={{ fontSize: 13 }}>No messages yet</div>
+        <div style={{ fontSize: 11 }}>Say hi to {activePeer.name.split(' ')[0]}!</div>
+      </div>
+    );
+
+    const items = [];
+    let lastDate = null;
+    messages.forEach((m, i) => {
+      const dateLabel = getDateLabel(m.created_at);
+      if (dateLabel !== lastDate) {
+        items.push(<div key={`d-${i}`} className="dm-date-divider"><span>{dateLabel}</span></div>);
+        lastDate = dateLabel;
+      }
+      const isMine = m.sender_id === currentUser.id;
+      const isLast = i === messages.length - 1 || messages[i + 1]?.sender_id !== m.sender_id;
+      items.push(
+        <div key={m.id || i} className={`dm-message ${isMine ? 'mine' : 'theirs'}`}>
+          <div className="dm-bubble">{m.text}</div>
+          {isLast && (
+            <div className="dm-msg-time">
+              {fmtMsgTime(m.created_at)}
+              {isMine && <span className="dm-read-tick">{m.read ? '✓✓' : '✓'}</span>}
+            </div>
+          )}
+        </div>
+      );
+    });
+    return items;
+  }
+
+  const totalUnread = contacts.reduce((acc, u) => acc + unreadFrom(u.id), 0);
+
+  return (
+    <div>
+      {totalUnread > 0 && (
+        <div style={{ marginBottom: 12, fontSize: 12, color: 'var(--text3)' }}>
+          <span style={{ color: 'var(--accent)', fontWeight: 600 }}>{totalUnread}</span> unread message{totalUnread !== 1 ? 's' : ''}
+        </div>
+      )}
+      <div className="dm-layout">
+        {/* Contacts sidebar */}
+        <div className="dm-sidebar">
+          <div className="dm-sidebar-header"><i className="ti ti-message-2"></i> Direct messages</div>
+          <div className="dm-search"><input placeholder="Search people..." value={search} onChange={e => setSearch(e.target.value)} /></div>
+          <div className="dm-contacts">
+            {sortedContacts.length === 0 && (
+              <div style={{ padding: '20px', fontSize: 12, color: 'var(--text3)', textAlign: 'center' }}>
+                {search ? 'No people found.' : 'No other users yet.'}
+              </div>
+            )}
+            {sortedContacts.map(u => {
+              const unread = unreadFrom(u.id);
+              const last = lastMsg(u.id);
+              const isMe = last?.sender_id === currentUser.id;
+              return (
+                <div
+                  key={u.id}
+                  className={`dm-contact${activePeer?.id === u.id ? ' active' : ''}`}
+                  onClick={() => setActivePeer(u)}
+                >
+                  <div className="dm-contact-avatar" style={{ background: u.color }}>{u.avatar}</div>
+                  <div className="dm-contact-info">
+                    <div className="dm-contact-name">{u.name}</div>
+                    <div className="dm-contact-preview">
+                      {last ? `${isMe ? 'You: ' : ''}${last.text}` : (u.designation || u.role)}
+                    </div>
+                  </div>
+                  <div className="dm-contact-meta">
+                    {last && <span className="dm-contact-time">{fmtMsgTime(last.created_at)}</span>}
+                    {unread > 0 && <span className="dm-unread-badge">{unread}</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Chat area */}
+        <div className="dm-main">
+          {!activePeer ? (
+            <div className="dm-no-contact">
+              <i className="ti ti-message-2" style={{ fontSize: 44, opacity: 0.2, marginBottom: 8 }}></i>
+              <div style={{ fontWeight: 500, color: 'var(--text)' }}>Select a person to start chatting</div>
+              <div style={{ fontSize: 12 }}>Private messages are end-to-end between team members</div>
+            </div>
+          ) : (
+            <>
+              {/* Header */}
+              <div className="dm-chat-header">
+                <div className="dm-contact-avatar" style={{ background: activePeer.color, width: 34, height: 34, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: '#000' }}>{activePeer.avatar}</div>
+                <div>
+                  <div className="dm-chat-header-name">{activePeer.name}</div>
+                  <div className="dm-chat-header-role">{activePeer.designation || activePeer.role}</div>
+                </div>
+                <div style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text3)' }}>
+                  <span className="badge badge-gray" style={{ textTransform: 'capitalize' }}>{activePeer.role}</span>
+                </div>
+              </div>
+
+              {/* Messages */}
+              <div className="dm-messages-area">
+                {loading ? (
+                  <div style={{ display: 'flex', justifyContent: 'center', padding: '40px 0' }}>
+                    <span className="spinner"></span>
+                  </div>
+                ) : renderMessages()}
+                <div ref={endRef}></div>
+              </div>
+
+              {/* Input */}
+              <div className="dm-input-area">
+                <textarea
+                  value={input}
+                  onChange={e => setInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
+                  placeholder={`Message ${activePeer.name.split(' ')[0]}...`}
+                  rows={1}
+                />
+                <button
+                  className="btn btn-primary"
+                  onClick={sendMessage}
+                  disabled={sending || !input.trim()}
+                  style={{ alignSelf: 'flex-end' }}
+                >
+                  <i className="ti ti-send" style={{ fontSize: 14 }}></i>
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── MAIN APP ──────────────────────────────────────────────────────────────────
 export default function App() {
   const [ready, setReady] = useState(false);
@@ -791,21 +1099,36 @@ export default function App() {
   const [punchLog, setPunchLog] = useState([]);
   const [mailSettings, setMailSettings] = useState({ gmail_id: '', incharge_id: '' });
   const [mailNotifications, setMailNotifications] = useState([]);
+  const [dmMessages, setDmMessages] = useState([]);
 
   useEffect(() => { loadData(); }, []);
 
   async function loadData() {
     try {
-      const [u, t, p, mn] = await Promise.all([DB.getAll('users'), DB.getAll('tasks'), DB.getAll('punch_log'), DB.getAll('mail_notifications')]);
+      const [u, t, p, mn] = await Promise.all([
+        DB.getAll('users'),
+        DB.getAll('tasks'),
+        DB.getAll('punch_log'),
+        DB.getAll('mail_notifications')
+      ]);
+      // Load DMs separately — table may not exist yet, fail gracefully
+      let dms = [];
+      try { dms = await DB.getAll('dm_messages'); } catch (e) { console.warn('dm_messages table not found — create it in Supabase. See SQL below.'); }
+
       const ms = await DB.getOne('mail_settings', 'id', 'global');
-      setUsers(u); setTasks(t); setPunchLog(p); setMailNotifications(mn);
+      setUsers(u); setTasks(t); setPunchLog(p); setMailNotifications(mn); setDmMessages(dms);
       if (ms) setMailSettings(ms);
+
       DB.subscribe('users', data => setUsers(data));
       DB.subscribe('tasks', data => setTasks(data));
       DB.subscribe('punch_log', data => setPunchLog(data));
       DB.subscribe('mail_notifications', data => setMailNotifications(data));
+
       setDbMode('supabase'); setReady(true);
-    } catch (e) { console.warn('Supabase error:', e.message); setDbMode('error'); setReady(true); }
+    } catch (e) {
+      console.warn('Supabase error:', e.message);
+      setDbMode('error'); setReady(true);
+    }
   }
 
   if (!ready) return <LoadingScreen msg="Connecting to Supabase..." />;
@@ -818,20 +1141,27 @@ export default function App() {
     </div>
   );
 
-  const unseenTasks = currentUser ? (currentUser.role === 'worker' ? tasks.filter(t => t.assigned_to === currentUser.id && !t.seen && !t.done) : tasks.filter(t => !t.seen && !t.done)) : [];
   if (!currentUser) return <AuthPage onLogin={setCurrentUser} users={users} setUsers={setUsers} />;
 
+  const unseenTasks = currentUser.role === 'worker'
+    ? tasks.filter(t => t.assigned_to === currentUser.id && !t.seen && !t.done)
+    : tasks.filter(t => !t.seen && !t.done);
+
+  const unreadDMs = dmMessages.filter(m => m.receiver_id === currentUser.id && !m.read).length;
+
   const isAdmin = currentUser.role !== 'worker';
+
   const navItems = [
     { id: 'dashboard', icon: 'ti-layout-dashboard', label: 'Dashboard', show: true },
-    { id: 'punch', icon: 'ti-clock', label: 'Punch clock', show: currentUser.role === 'worker' },
-    { id: 'tasks', icon: 'ti-checklist', label: 'Tasks', show: true, badge: unseenTasks.length },
-    { id: 'email', icon: 'ti-mail', label: 'Mail centre', show: true, badge: mailNotifications.filter(n => n.user_id === currentUser.id && !n.read).length },
-    { id: 'chat', icon: 'ti-message-2', label: 'AI assistant', show: true },
-    { id: 'users', icon: 'ti-users', label: 'Manage users', show: isAdmin },
+    { id: 'punch',     icon: 'ti-clock',            label: 'Punch clock', show: currentUser.role === 'worker' },
+    { id: 'tasks',     icon: 'ti-checklist',         label: 'Tasks',      show: true, badge: unseenTasks.length },
+    { id: 'dm',        icon: 'ti-messages',          label: 'Messages',   show: true, badge: unreadDMs },
+    { id: 'email',     icon: 'ti-mail',              label: 'Mail centre', show: true, badge: mailNotifications.filter(n => n.user_id === currentUser.id && !n.read).length },
+    { id: 'chat',      icon: 'ti-message-2',         label: 'AI assistant', show: true },
+    { id: 'users',     icon: 'ti-users',             label: 'Manage users', show: isAdmin },
   ].filter(n => n.show);
 
-  const pageTitle = { dashboard: 'Dashboard', punch: 'Punch clock', tasks: 'Tasks', email: 'Mail centre', chat: 'AI assistant', users: 'Manage users' };
+  const pageTitle = { dashboard: 'Dashboard', punch: 'Punch clock', tasks: 'Tasks', dm: 'Messages', email: 'Mail centre', chat: 'AI assistant', users: 'Manage users' };
 
   return (
     <div className="app-shell">
@@ -839,7 +1169,13 @@ export default function App() {
         <div className="sidebar-logo"><div className="logo-wordmark"><span>Strong</span>Steel</div><div className="logo-sub">Workbase</div></div>
         <nav className="sidebar-nav">
           <div className="nav-section-label">Navigation</div>
-          {navItems.map(n => (<button key={n.id} className={`nav-item${page === n.id ? ' active' : ''}`} onClick={() => setPage(n.id)}><i className={`ti ${n.icon}`}></i><span className="nav-label">{n.label}</span>{n.badge > 0 && <span className="nav-badge">{n.badge}</span>}</button>))}
+          {navItems.map(n => (
+            <button key={n.id} className={`nav-item${page === n.id ? ' active' : ''}`} onClick={() => setPage(n.id)}>
+              <i className={`ti ${n.icon}`}></i>
+              <span className="nav-label">{n.label}</span>
+              {n.badge > 0 && <span className="nav-badge">{n.badge}</span>}
+            </button>
+          ))}
         </nav>
         <div className="sidebar-user">
           <div className="user-avatar" style={{ background: currentUser.color, color: '#000' }}>{currentUser.avatar}</div>
@@ -848,23 +1184,39 @@ export default function App() {
         </div>
       </aside>
 
-      {showLogout && (<div className="modal-overlay" onClick={() => setShowLogout(false)}><div className="modal" style={{ width: 360, textAlign: 'center' }} onClick={e => e.stopPropagation()}><div style={{ marginBottom: 12 }}><i className="ti ti-logout" style={{ fontSize: 32, color: 'var(--text3)' }}></i></div><div className="modal-title" style={{ justifyContent: 'center', display: 'flex', marginBottom: 8 }}>Sign out?</div><div style={{ color: 'var(--text2)', fontSize: 13, marginBottom: 24 }}>Signed in as <strong style={{ color: 'var(--text)' }}>{currentUser.name}</strong></div><div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}><button className="btn btn-secondary" onClick={() => setShowLogout(false)}>Cancel</button><button className="btn btn-danger" onClick={() => { setCurrentUser(null); setShowLogout(false); }}>Sign out</button></div></div></div>)}
+      {showLogout && (
+        <div className="modal-overlay" onClick={() => setShowLogout(false)}>
+          <div className="modal" style={{ width: 360, textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+            <div style={{ marginBottom: 12 }}><i className="ti ti-logout" style={{ fontSize: 32, color: 'var(--text3)' }}></i></div>
+            <div className="modal-title" style={{ justifyContent: 'center', display: 'flex', marginBottom: 8 }}>Sign out?</div>
+            <div style={{ color: 'var(--text2)', fontSize: 13, marginBottom: 24 }}>Signed in as <strong style={{ color: 'var(--text)' }}>{currentUser.name}</strong></div>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+              <button className="btn btn-secondary" onClick={() => setShowLogout(false)}>Cancel</button>
+              <button className="btn btn-danger" onClick={() => { setCurrentUser(null); setShowLogout(false); }}>Sign out</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="main-area">
         <div className="topbar">
           <div className="topbar-title">{pageTitle[page]}</div>
           <div className="topbar-right">
-            <div className="topbar-live"><div className="live-dot" style={{ background: dbMode === 'supabase' ? 'var(--success)' : '#f59e0b' }}></div>{dbMode === 'supabase' ? 'Live · Supabase' : 'Connecting...'}</div>
+            <div className="topbar-live">
+              <div className="live-dot" style={{ background: dbMode === 'supabase' ? 'var(--success)' : '#f59e0b' }}></div>
+              {dbMode === 'supabase' ? 'Live · Supabase' : 'Connecting...'}
+            </div>
             <div className="topbar-date">{new Date().toLocaleString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</div>
           </div>
         </div>
         <div className="page-content">
           {page === 'dashboard' && <Dashboard currentUser={currentUser} tasks={tasks} users={users} punchLog={punchLog} />}
-          {page === 'punch' && <PunchPage currentUser={currentUser} punchLog={punchLog} setPunchLog={setPunchLog} tasks={tasks} />}
-          {page === 'tasks' && <TasksPage currentUser={currentUser} tasks={tasks} setTasks={setTasks} users={users} />}
-          {page === 'email' && <EmailAI currentUser={currentUser} users={users} mailSettings={mailSettings} setMailSettings={setMailSettings} mailNotifications={mailNotifications} setMailNotifications={setMailNotifications} />}
-          {page === 'chat' && <AiChat currentUser={currentUser} tasks={tasks} users={users} />}
-          {page === 'users' && isAdmin && <ManageUsers currentUser={currentUser} users={users} setUsers={setUsers} />}
+          {page === 'punch'     && <PunchPage currentUser={currentUser} punchLog={punchLog} setPunchLog={setPunchLog} tasks={tasks} />}
+          {page === 'tasks'     && <TasksPage currentUser={currentUser} tasks={tasks} setTasks={setTasks} users={users} />}
+          {page === 'dm'        && <DirectMessages currentUser={currentUser} users={users} dmMessages={dmMessages} setDmMessages={setDmMessages} />}
+          {page === 'email'     && <EmailAI currentUser={currentUser} users={users} mailSettings={mailSettings} setMailSettings={setMailSettings} mailNotifications={mailNotifications} setMailNotifications={setMailNotifications} />}
+          {page === 'chat'      && <AiChat currentUser={currentUser} tasks={tasks} users={users} />}
+          {page === 'users'     && isAdmin && <ManageUsers currentUser={currentUser} users={users} setUsers={setUsers} />}
         </div>
       </div>
     </div>
